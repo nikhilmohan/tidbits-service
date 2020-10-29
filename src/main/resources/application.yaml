@@ -1,0 +1,23 @@
+server:
+  port: 9050
+spring:
+  profiles:
+    active: dev
+
+---
+spring:
+  profiles: dev
+  data:
+    mongodb:
+      host: localhost
+      port: 27017
+      database: hourglass
+
+---
+spring:
+  profile: prod
+  data:
+    mongodb:
+      host: localhost
+      port: 27018
+      database: hourglass
