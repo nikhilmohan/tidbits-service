@@ -11,6 +11,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.*;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
@@ -19,6 +20,7 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 import static org.springframework.data.mongodb.core.aggregation.Aggregation.*;
@@ -39,7 +41,7 @@ public class TidbitsResource {
     TidbitFeedRepository tidbitFeedRepository;
 
     @GetMapping("/tidbits")
-    public Mono<Tidbits> getTidbits() {
+    public Mono<Tidbits> getTidbits(@RequestHeader("user") Optional<String> user) {
         return tidbitFeedRepository.findByFeedDate(LocalDate.now())
                 .flatMap(tidbitFeed -> {
                     Tidbits tidbitResponse = new Tidbits();
@@ -47,23 +49,26 @@ public class TidbitsResource {
                     tidbitResponse.setFeedDate(LocalDate.now());
                     //retrieve user
                     // check favourites
-                    String triviaParams = constructParam(tidbitResponse.getTriviaList());
-                    log.info("triviaParams" + triviaParams);
-                    WebClient client = WebClient.create("http://localhost:9040/favourites/user/1234/trivia");
-                    return client.get().uri("?ids=" + triviaParams)
-                            .retrieve()
-                            .bodyToMono(FavouriteTriviaResponse.class)
-                            .flatMap(favouriteTriviaResponse -> {
-                                tidbitResponse.setTriviaList(tidbitResponse.getTriviaList().stream()
-                                        .map(trivia ->  {
-                                            trivia.setFavourite(isFavouriteTrivia(trivia.getTerm(), favouriteTriviaResponse));
-                                            return trivia;
-                                        })
-                                        .collect(Collectors.toList()));
 
-                                return Mono.just(tidbitResponse);
+                    if (user.isPresent()) {
+                        String triviaParams = constructParam(tidbitResponse.getTriviaList());
+                        log.info("triviaParams" + triviaParams);
+                        WebClient client = WebClient.create("http://localhost:9900/favourites-service/favourites/user/"
+                                + user.get() + "/trivia");
+                        return client.get().uri("?ids=" + triviaParams)
+                                .retrieve()
+                                .bodyToMono(FavouriteTriviaResponse.class)
+                                .flatMap(favouriteTriviaResponse -> {
+                                    tidbitResponse.setTriviaList(tidbitResponse.getTriviaList().stream()
+                                            .map(trivia -> {
+                                                trivia.setFavourite(isFavouriteTrivia(trivia.getTerm(), favouriteTriviaResponse));
+                                                return trivia;
+                                            })
+                                            .collect(Collectors.toList()));
+                                    return Mono.just(tidbitResponse);
 
-                            });
+                                });
+                    } else return Mono.just(tidbitResponse);
                 }).switchIfEmpty(Mono.defer(() -> this.getNewFeed()));
     }
 
@@ -75,7 +80,7 @@ public class TidbitsResource {
     private String constructParam(List<Trivia> triviaList) {
         return triviaList.stream()
                 .map(trivia -> trivia.getTerm())
-                .reduce("",(s, s2) -> s + "," + s2);
+                .reduce((s, s2) -> s + "," + s2).orElse("");
     }
     public Mono<Tidbits> getNewFeed()   {
         log.info("Getting new feed!");
