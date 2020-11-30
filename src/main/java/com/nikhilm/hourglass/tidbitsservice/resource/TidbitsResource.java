@@ -1,16 +1,22 @@
 package com.nikhilm.hourglass.tidbitsservice.resource;
 
+import ch.qos.logback.classic.spi.IThrowableProxy;
+import ch.qos.logback.core.html.IThrowableRenderer;
+import com.nikhilm.hourglass.tidbitsservice.exceptions.TidbitException;
 import com.nikhilm.hourglass.tidbitsservice.models.*;
 import com.nikhilm.hourglass.tidbitsservice.repositories.TidbitFeedRepository;
 import com.nikhilm.hourglass.tidbitsservice.repositories.TopicRepository;
 import com.nikhilm.hourglass.tidbitsservice.services.TidbitsService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreaker;
+import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreakerFactory;
 import org.springframework.data.mongodb.core.MongoTemplate;
 
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.*;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -18,9 +24,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import static org.springframework.data.mongodb.core.aggregation.Aggregation.*;
@@ -28,21 +32,34 @@ import static org.springframework.data.mongodb.core.aggregation.Aggregation.*;
 @RestController
 @Slf4j
 public class TidbitsResource {
+
     @Autowired
-    private TidbitsService tidbitsService;
+    TidbitsService tidbitsService;
 
     @Autowired
     TopicRepository topicRepository;
 
-    @Autowired
-    ReactiveMongoTemplate mongoTemplate;
 
     @Autowired
     TidbitFeedRepository tidbitFeedRepository;
 
+    @Autowired
+    ReactiveCircuitBreakerFactory reactiveCircuitBreakerFactory;
+
+    ReactiveCircuitBreaker rcb;
+
+    TidbitsResource(ReactiveCircuitBreakerFactory reactiveCircuitBreakerFactory)    {
+        this.reactiveCircuitBreakerFactory = reactiveCircuitBreakerFactory;
+        rcb = reactiveCircuitBreakerFactory.create("tidbits");
+    }
+
     @GetMapping("/tidbits")
     public Mono<Tidbits> getTidbits(@RequestHeader("user") Optional<String> user) {
-        return tidbitFeedRepository.findByFeedDate(LocalDate.now())
+        return rcb.run(tidbitFeedRepository.findByFeedDate(LocalDate.now()),
+                throwable -> {
+                    log.info("Exception thrown " + throwable.getMessage());
+                    return Mono.error(new TidbitException(500, "Internal server error"));
+                })
                 .flatMap(tidbitFeed -> {
                     Tidbits tidbitResponse = new Tidbits();
                     tidbitResponse.getTriviaList().addAll(tidbitFeed.getTriviaList());
@@ -53,11 +70,12 @@ public class TidbitsResource {
                     if (user.isPresent()) {
                         String triviaParams = constructParam(tidbitResponse.getTriviaList());
                         log.info("triviaParams" + triviaParams);
-                        WebClient client = WebClient.create("http://localhost:9900/favourites-service/favourites/user/"
-                                + user.get() + "/trivia");
-                        return client.get().uri("?ids=" + triviaParams)
-                                .retrieve()
-                                .bodyToMono(FavouriteTriviaResponse.class)
+                        return reactiveCircuitBreakerFactory.create("favourites")
+                                .run(tidbitsService.fetchFavourites(user.get(), triviaParams),
+                                        throwable -> {
+                                            tidbitResponse.setFavouritesEnabled(false);
+                                            return Mono.just(new FavouriteTriviaResponse());
+                                        })
                                 .flatMap(favouriteTriviaResponse -> {
                                     tidbitResponse.setTriviaList(tidbitResponse.getTriviaList().stream()
                                             .map(trivia -> {
@@ -69,8 +87,11 @@ public class TidbitsResource {
 
                                 });
                     } else return Mono.just(tidbitResponse);
-                }).switchIfEmpty(Mono.defer(() -> this.getNewFeed()));
+                }).switchIfEmpty(Mono.defer(() -> this.getNewFeed()))
+                .onErrorMap(throwable -> new TidbitException(500, "Internal server error!"));
     }
+
+
 
     private boolean isFavouriteTrivia(String term, FavouriteTriviaResponse favouriteTriviaResponse) {
         return favouriteTriviaResponse.getFavouriteTrivia().stream()
@@ -85,52 +106,83 @@ public class TidbitsResource {
     public Mono<Tidbits> getNewFeed()   {
         log.info("Getting new feed!");
         TidbitFeed tidbitFeed = new TidbitFeed();
-        return groupByCategory()
+        return tidbitsService.groupByCategory()
             .flatMap(topicStats -> {
                 return pickTopicIndex(topicStats);
             })
             .flatMap(topicStats -> {
-                return topicRepository.findByCategory(topicStats.getCategory())
+                return rcb.run(topicRepository.findByCategory(topicStats.getCategory())
                         .skip(topicStats.getCount())
-                        .take(1);
+                        .take(1), throwable -> Flux.error(new TidbitException(500, "Internal server error!")));
             })
             .flatMap(topic -> {
                 //call datamuse api
                 log.info("topic " + topic.getCategory() + " " + topic.getWord());
-                WebClient client = WebClient.create("https://api.datamuse.com/words");
-                return client.get().uri("?topics="+topic.getWord())
-                        .retrieve()
-                        .bodyToMono(List.class)
-                        .flatMap(list -> {
-                            int idx = getRandomNumberinRange(0, list.size() - 1);
-                            log.info("Selected word [" + idx + "] " + list.stream().skip(idx).limit(1).findAny());
+                return tidbitsService.getWords(topic.getWord())
+                   .flatMap(list -> {
+                       log.info("does it get here by any chance " + list);
+                        int idx = getRandomNumberinRange(0, list.size() - 1);
+                        log.info("Selected word [" + idx + "] " + list.stream().skip(idx).limit(1).findAny());
+                        LinkedHashMap word = (LinkedHashMap) (list.stream().skip(idx).limit(1).findAny()
+                                       .orElse(getDefault(topic.getCategory().getValue())));
 
-                            LinkedHashMap word = (LinkedHashMap) (list.stream().skip(idx).limit(1).findAny().get());
-                            log.info("Word " + word.get("word"));
-                            Trivia trivia = new Trivia();
-                            trivia.setCategory(topic.getCategory());
-                            trivia.setTerm(word.get("word").toString());
-                            trivia.setFact("Some dummy gyan!");
-                            return Mono.just(trivia);
+                        log.info("Word " + word.get("word"));
+                        Trivia trivia = new Trivia();
+                        trivia.setCategory(topic.getCategory());
+                        trivia.setTerm(word.get("word").toString());
+                        trivia.setFact("Some dummy gyan!");
+                        return Mono.just(trivia);
 //                                WebClient apiClient = WebClient.create("http://localhost:8099/");
 //                                return apiClient.get().uri(word.getWord())
 //                                        .retrieve()
 //                                        .bodyToMono(Trivia.class);
-                        });
+                    });
+
+
+
             })
             .reduce(tidbitFeed, (feed, trivia) -> {
                 feed.setFeedDate(LocalDate.now());
                 feed.getTriviaList().add(trivia);
+                log.info("saved trivia and feed " + feed);
                 return feed;
             })
-            .flatMap(tidbitFeedRepository::save)
+            .flatMap(tidbitFeed1 -> rcb
+            .run(tidbitFeedRepository.save(tidbitFeed1), throwable -> Mono.just(tidbitFeed1)))
             .flatMap(tidbitFeed1 -> {
                 Tidbits response = new Tidbits();
                 response.getTriviaList().addAll(tidbitFeed1.getTriviaList());
                 response.setFeedDate(LocalDate.now());
+                log.info("response " + response);
                 return Mono.just(response);
             });
     }
+
+
+
+    private LinkedHashMap<Object, Object> getDefault(String category) {
+        LinkedHashMap<Object, Object> result = new LinkedHashMap<>();
+        switch (category)  {
+            case "science":
+                result.put("word", "Science trivia");
+                break;
+            case "technology":
+                result.put("word", "Technology trivia");
+                break;
+            case "sport":
+                result.put("word", "Sport trivia");
+                break;
+            case "travel":
+                result.put("word", "Travel trivia");
+                break;
+            default:
+                result.put("word", "");
+
+        }
+        return result;
+
+    }
+
     private Mono<TopicStats> pickTopicIndex(TopicStats stats)   {
         TopicStats topicStats = new TopicStats();
         topicStats.setCategory(stats.getCategory());
@@ -141,15 +193,7 @@ public class TidbitsResource {
     private int getRandomNumberinRange(int min, int max) {
         return (int) ((Math.random() * (max - min)) + min);
     }
-    @GetMapping("/test")
-    public Flux<Topic> getTopics()  {
-        return topicRepository.findAll();
-    }
-    private Flux<TopicStats> groupByCategory() {
-        GroupOperation groupByCategoryAndCount = group("category")
-                .count().as("count");
 
-        Aggregation aggregation = newAggregation(groupByCategoryAndCount);
-        return mongoTemplate.aggregate(aggregation, Topic.class, TopicStats.class);
-    }
+
+
 }

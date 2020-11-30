@@ -17,4 +17,5 @@ public class Tidbits {
     private List<Trivia> triviaList = new ArrayList<>();
     @JsonFormat(pattern = "yyyy-MM-dd")
     private LocalDate feedDate;
+    private boolean isFavouritesEnabled = true;
 }
