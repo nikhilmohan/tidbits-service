@@ -1,7 +1,5 @@
 package com.nikhilm.hourglass.tidbitsservice.resource;
 
-import ch.qos.logback.classic.spi.IThrowableProxy;
-import ch.qos.logback.core.html.IThrowableRenderer;
 import com.nikhilm.hourglass.tidbitsservice.exceptions.TidbitException;
 import com.nikhilm.hourglass.tidbitsservice.models.*;
 import com.nikhilm.hourglass.tidbitsservice.repositories.TidbitFeedRepository;
@@ -11,18 +9,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreaker;
 import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreakerFactory;
-import org.springframework.data.mongodb.core.MongoTemplate;
 
-import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
-import org.springframework.data.mongodb.core.aggregation.*;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -191,7 +185,8 @@ public class TidbitsResource {
     }
 
     private int getRandomNumberinRange(int min, int max) {
-        return (int) ((Math.random() * (max - min)) + min);
+        return new SecureRandom().ints(min, max + 1).findFirst().getAsInt();
+
     }
 
 
