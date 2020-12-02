@@ -8,6 +8,7 @@ import org.springframework.cloud.circuitbreaker.resilience4j.ReactiveResilience4
 import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JConfigBuilder;
 import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreakerFactory;
 import org.springframework.context.annotation.Bean;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
 
@@ -27,6 +28,9 @@ public class TidbitsServiceApplication {
 				.build());
 		return factory;
 	}
-
+	@Bean
+	WebClient webClient()	{
+		return WebClient.create();
+	}
 
 }
