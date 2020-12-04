@@ -54,4 +54,6 @@ workflows:
   main:
     jobs:
       - build:
-          context: sonarcloud-nikhilmohan-context
+          context:
+            - sonarcloud-nikhilmohan-context
+            - docker-context
