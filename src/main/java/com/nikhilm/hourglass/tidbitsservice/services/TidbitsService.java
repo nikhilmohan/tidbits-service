@@ -7,6 +7,7 @@ import com.nikhilm.hourglass.tidbitsservice.models.TopicStats;
 import com.nikhilm.hourglass.tidbitsservice.repositories.TopicRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.aggregation.GroupOperation;
@@ -32,6 +33,9 @@ public class TidbitsService {
 
     @Autowired
     WebClient webClient;
+
+    @Value("${service.url.gateway}")
+    private String gatewayServiceUrl;
 
 
     public Mono<List> getWords(String topic)  {
@@ -59,7 +63,7 @@ public class TidbitsService {
 
     private Mono<ClientResponse> callFavourites(String userId, String params)    {
         return webClient.get()
-                .uri("http://gateway-service:9900/favourites-service/favourites/user/" + userId + "/trivia?ids="+params)
+                .uri("http://" + gatewayServiceUrl + ":9900/favourites-service/favourites/user/" + userId + "/trivia?ids="+params)
                 .exchange();
 
     }
