@@ -43,6 +43,7 @@ public class TidbitsService {
         return webClient.get().uri("https://api.datamuse.com/words?topics=" + topic)
                 .exchange()
                 .flatMap(clientResponse -> {
+                    log.info("Datamuse response status " + clientResponse.statusCode().toString() + " topic " + topic);
                     if (!clientResponse.statusCode().is2xxSuccessful())  {
                         return Mono.error(new TidbitException(502, "External service unavailable!"));
                     }
