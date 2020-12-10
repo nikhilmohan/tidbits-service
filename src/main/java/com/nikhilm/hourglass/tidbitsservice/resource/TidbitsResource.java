@@ -115,7 +115,7 @@ public class TidbitsResource {
                 return tidbitsService.getWords(topic.getWord())
                    .flatMap(list -> {
                        log.info("does it get here by any chance " + list);
-                        int idx = getRandomNumberinRange(0, list.size() - 1);
+                        int idx = list.isEmpty() ? 0 : getRandomNumberinRange(0, list.size() - 1);
                         log.info("Selected word [" + idx + "] " + list.stream().skip(idx).limit(1).findAny());
                         LinkedHashMap word = (LinkedHashMap) (list.stream().skip(idx).limit(1).findAny()
                                        .orElse(getDefault(topic.getCategory().getValue())));
