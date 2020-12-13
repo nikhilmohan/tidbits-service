@@ -5,6 +5,14 @@ import com.nikhilm.hourglass.tidbitsservice.models.*;
 import com.nikhilm.hourglass.tidbitsservice.repositories.TidbitFeedRepository;
 import com.nikhilm.hourglass.tidbitsservice.repositories.TopicRepository;
 import com.nikhilm.hourglass.tidbitsservice.services.TidbitsService;
+import io.swagger.v3.oas.annotations.OpenAPIDefinition;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.info.Contact;
+import io.swagger.v3.oas.annotations.info.Info;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreaker;
@@ -25,6 +33,14 @@ import static org.springframework.data.mongodb.core.aggregation.Aggregation.*;
 
 @RestController
 @Slf4j
+@OpenAPIDefinition(
+        info = @Info(
+                title = "Tidbits service API",
+                version = "1.0",
+                description = "API for fetching trivia recommendations in hourglass application",
+                contact = @Contact(name = "Nikhil Mohan", email = "nikmohan81@gmail.com")
+        )
+)
 public class TidbitsResource {
 
     @Autowired
@@ -47,8 +63,13 @@ public class TidbitsResource {
         rcb = reactiveCircuitBreakerFactory.create("tidbits");
     }
 
+    @Operation(summary = "Fetch tidbits recommendations for the day")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "list of trivia",
+                    content = { @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = Tidbits.class)) })})
     @GetMapping("/tidbits")
-    public Mono<Tidbits> getTidbits(@RequestHeader("user") Optional<String> user) {
+    public Mono<Tidbits> getTidbits(@RequestHeader(name = "user", required = false) Optional<String> user) {
         return rcb.run(tidbitFeedRepository.findByFeedDate(LocalDate.now()),
                 throwable -> {
                     log.info("Exception thrown " + throwable.getMessage());
